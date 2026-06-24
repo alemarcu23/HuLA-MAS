@@ -1,0 +1,133 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# HuLA-MAS — configuration 
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Which map to load: a name under maps/<name>.yaml, or a path to a .yaml file.
+map: official
+
+llm:
+  model: "qwen2.5:3b"
+  backend: ollama_sdk        # ollama_sdk | transformers
+  api_base: "http://localhost:11434"   # Ollama endpoint; null for transformers
+
+  # Sampling defaults (Qwen3 thinking-mode recommendations). Applied to every
+  # LLM call unless a stage overrides them explicitly.
+  sampling:
+    max_tokens: 8000
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+
+agents:
+  num_agents: 2              # number of LLM rescue agents
+
+  # Capability
+  # Per-agent preset (by name), referencing the `presets` map below.
+  capability_presets: [generalist, generalist]
+
+  # Capability preset definitions: name -> capability levels.
+  # Valid levels are defined by the Capability classes
+  # (vision/strength/medical: low|medium|high, speed: slow|normal|fast).
+  presets:
+    scout:        {vision: high,   strength: low,    medical: medium, speed: normal}
+    medic:        {vision: low,    strength: medium, medical: high,   speed: normal}
+    heavy_lifter: {vision: medium, strength: high,   medical: low,    speed: normal}
+    generalist:   {vision: medium, strength: medium, medical: medium, speed: normal}
+
+  # Role: assign each agent a role (by name), then tell it what to do via
+  # `role_goals` below. The role is fixed for the whole run.
+  roles: [medic, scout]
+
+  # Role goals: name -> high-level directive injected as the agent's mission.
+  role_goals:
+    scout: >-
+      Search as many tiles as possible, map all areas, and inform teammates about
+      victims and obstacles. Do not waste time rescuing victims unless you have
+      mapped the entire area.
+    medic: >-
+      Your goal is to save as many INJURED victims (critically or mildly injured)
+      as possible. Pick up injured victims and carry them to the drop zone as
+      efficiently as you can. IGNORE healthy victims — they are not injured, need
+      no help, and score 0 points.
+    heavy_lifter: >-
+      Remove obstacles blocking paths for your teammates. Your priority is clearing
+      the way so others can access victims and unexplored areas.
+    support: >-
+      Help your teammates in cooperative actions as often as possible. Always
+      accept help requests from others and assist actively in joint rescues.
+
+  # 'informed'  = agents know their capabilities from the start
+  # 'discovery' = agents learn capabilities by failing actions
+  capability_knowledge: informed
+
+  # How a joint action (CarryObjectTogether / RemoveObjectTogether) gets its
+  # help request started when an agent shows the intent but has no committed
+  # partner yet:
+  #   auto_bridge  = calling the joint action auto-sends the ask_help for you
+  #   llm_explicit = the agent must send the ask_help itself first
+  # Either way a teammate must reply "yes" (consent-only), then the rendezvous,
+  # joint action, and delivery are driven deterministically.
+  joint_action_ask_trigger: auto_bridge
+
+  # Reasoning strategy per agent. 
+  # Options: io | cot | reflexion | self_refine
+  reasoning_strategies: [cot, cot]
+
+  # Planning strategy per agent.
+  # Options: io | deps | critic | cot
+  planning_strategies: [cot, cot]
+
+# Memory module tuning. Applied to every agent's memory at startup.
+memory:
+  maxlen: 200                # max entries kept in each agent's base memory
+  dedup_lookback: 3          # how many recent entries to scan for duplicates
+  compress_threshold: 10     # compress base memory once it exceeds this many entries
+  compress_keep_recent: 5    # entries kept verbatim when compressing (rest summarized)
+  max_episodes: 20           # max closed episodes retained per agent
+  prompt_memory_limit: 10    # max past episodes surfaced into an LLM prompt
+
+world:
+  seed: null                 # int for reproducibility; null = map/default seed
+
+server:
+  enable_gui: true           # browser visualizer at localhost:<vis_port>
+  vis_port: 3000             # browser visualizer port
+  api_port: 3001             # MATRX REST API port
+
+# Task description injected into every LLM stage. The {drop_zone} placeholder is
+# filled in with the map's drop-zone coordinate at runtime.
+task:
+  game_rules: |
+    == GAME RULES ==
+    Goal:
+    - Search all areas for victims and rescue them by carrying them to the drop zone at {drop_zone} and using Drop.
+    - You can only carry one victim at a time.
+
+    Victim types and scoring:
+    - Critically injured victims: worth 6 points. Rescue these first.
+    - Mildly injured victims: worth 3 points. Rescue these if no critical victims remain.
+    - HEALTHY (uninjured) victims: worth 0 points. Do NOT rescue them.
+      Healthy victims are NOT injured and do NOT need your help.
+      Carrying a healthy victim to the drop zone wastes your time and scores 0 points.
+      Leave healthy victims where they are and focus on injured victims.
+
+    Carrying victims:
+    - After carrying an INJURED victim, always navigate to the drop zone and Drop the victim there to score points.
+    - Never carry a healthy victim — they look uninjured and their name contains 'healthy'.
+
+    Removing obstacles:
+    - Remove obstacles that are blocking your path to victims or areas.
+
+    Navigation:
+    - Use MoveTo(x, y) or MoveToArea(area) to navigate. You must be adjacent to an object to interact with it.
+    - Use SearchArea(area) to systematically visit every cell in an area and detect victims.
+      SearchArea is REQUIRED for victim detection — MoveTo alone will MISS victims.
+      WARNING: SearchArea will fail or get stuck if an obstacle is blocking the path near the
+      agent or near the area door. If SearchArea is not making progress, check observation.
+      obstacles and use RemoveObject to clear the blocker first.
+
+# DO NOT CHANGE!
+run:
+  task_type: official
+  condition: normal          # Human condition: normal | strong | weak

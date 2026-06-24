@@ -1,0 +1,51 @@
+# Tutorial map: smaller version of official
+
+name: tutorial
+grid: [19, 19]
+
+rooms:
+  - { id: 1, pos: [1, 1],   size: [5, 4], door: bottom }
+  - { id: 2, pos: [7, 1],   size: [5, 4], door: bottom }
+  - { id: 3, pos: [13, 1],  size: [5, 4], door: bottom }
+  - { id: 4, pos: [1, 7],   size: [5, 4], door: top }
+  - { id: 5, pos: [7, 7],   size: [5, 4], door: top }
+  - { id: 6, pos: [1, 13],  size: [5, 4], door: bottom }
+  - { id: 7, pos: [7, 13],  size: [5, 4], door: bottom }
+  - { id: 8, pos: [13, 13], size: [5, 4], door: bottom }
+
+drop_zone: { location: [17, 7], height: 4 }
+
+# explicit victim type + area + position.
+victims:
+  - { type: 'critically injured elderly woman', area: 3, pos: [16, 3] }
+  - { type: 'healthy man',                       area: 8, pos: [14, 14] }
+  - { type: 'mildly injured elderly man',        area: 4, pos: [2, 9] }
+  - { type: 'healthy girl',                      area: 6, pos: [2, 14] }
+  - { type: 'critically injured girl',           area: 5, pos: [8, 9] }
+  - { type: 'mildly injured boy',                area: 8, pos: [16, 15] }
+  - { type: 'healthy boy',                       area: 2, pos: [10, 3] }
+  - { type: 'healthy elderly man',               area: 5, pos: [10, 8] }
+  - { type: 'healthy dog',                       area: 7, pos: [10, 15] }
+
+# Explicit obstacles at specific door cells.
+obstacles:
+  - { area: 1, type: stone, pos: [3, 4] }
+  - { area: 4, type: tree,  pos: [3, 7] }
+  - { area: 6, type: tree,  pos: [3, 16] }
+  - { area: 7, type: rock,  pos: [9, 16] }
+  - { area: 8, type: stone, pos: [15, 16] }
+  - { area: 5, type: rock,  pos: [9, 7] }
+
+# the four victims to deliver
+goal:
+  ghosts:
+    - 'critically injured girl'
+    - 'critically injured elderly woman'
+    - 'mildly injured boy'
+    - 'mildly injured elderly man'
+
+decorations:
+  auto_roof: true
+  auto_streets: true
+  auto_signs: true
+  keyboard_sign: [9, 0]

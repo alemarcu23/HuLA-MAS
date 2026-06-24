@@ -1,0 +1,445 @@
+import json
+import os
+import re
+import time
+from itertools import combinations
+from typing import Any, Dict, List, Optional
+
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
+
+
+def _strip_thinking(obj):
+    if isinstance(obj, str):
+        return _THINK_RE.sub('', obj).strip()
+    if isinstance(obj, dict):
+        return {k: _strip_thinking(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_thinking(v) for v in obj]
+    return obj
+
+from matrx.metrics.agent_metrics import AgentMetricsTracker
+
+class SimulationMetrics:
+
+    def __init__(self) -> None:
+        self._agents: List[Any] = []
+
+    def register(self, agent: Any) -> None:
+        self._agents.append(agent)
+
+    def aggregate(
+        self,
+        agents: Optional[List[Any]] = None,
+        planner: Any = None,
+        score_file: Optional[str] = None,
+        start_time: Optional[float] = None,
+        config: Optional[Dict] = None,
+        iteration_history: Optional[List] = None,
+    ) -> Dict[str, Any]:
+        agent_list = agents if agents is not None else self._agents
+        wall_clock = time.time() - start_time if start_time else 0.0
+
+        # Read score
+        score_data = {}
+        if score_file and os.path.exists(score_file):
+            with open(score_file) as f:
+                score_data = json.load(f)
+
+        result: Dict[str, Any] = {}
+
+        result['experiment_metadata'] = {
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'wall_clock_seconds': round(wall_clock, 2),
+            'config': config or {},
+            'num_agents': len(agent_list),
+        }
+
+        result['task_performance'] = {
+            'victims_rescued': score_data.get('victims_rescued', 0),
+            'total_victims': score_data.get('total_victims', 0),
+            'score': score_data.get('score', 0),
+            'block_hit_rate': score_data.get('block_hit_rate', 0.0),
+        }
+
+        all_victims_found = set()
+        for agent in agent_list:
+            tracker = self._get_tracker(agent)
+            if tracker:
+                for v in tracker.victims_found:
+                    all_victims_found.add(v['victim_id'])
+        result['task_performance']['victims_found'] = len(all_victims_found)
+
+        completion_ticks = max(
+            (getattr(a, '_tick_count', 0) for a in agent_list), default=0
+        )
+        result['task_performance']['completion_ticks'] = completion_ticks
+
+        per_agent_cells: Dict[str, set] = {}
+        per_agent_areas: Dict[str, List] = {}
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if tracker:
+                per_agent_cells[aid] = tracker.cells_visited
+            if hasattr(agent, 'get_area_summaries'):
+                per_agent_areas[aid] = agent.get_area_summaries()
+
+        all_cells = [c for c in per_agent_cells.values()]
+        union_cells = set().union(*all_cells) if all_cells else set()
+        total_visits = sum(len(c) for c in all_cells)
+       
+        redundant_visits = total_visits - len(union_cells)
+
+        pairwise_overlap = {
+            f'{a}___{b}': len(per_agent_cells[a] & per_agent_cells[b])
+            for a, b in combinations(sorted(per_agent_cells), 2)
+        }
+
+        result['spatial_coordination'] = {
+            'areas_covered_per_agent': {
+                aid: summaries for aid, summaries in per_agent_areas.items()
+            },
+            'total_unique_cells': len(union_cells),
+            'redundant_visits': redundant_visits,
+            'overlap_ratio': round(redundant_visits / total_visits, 3) if total_visits else 0.0,
+            'pairwise_overlap': pairwise_overlap,
+            'per_agent_unique_cells': {
+                aid: len(cells) for aid, cells in per_agent_cells.items()
+            },
+        }
+
+        _REMOVE_ACTIONS = {'RemoveObject', 'RemoveObjectTogether'}
+        obstacles_removed = 0
+        for agent in agent_list:
+            tracker = self._get_tracker(agent)
+            if tracker:
+                obstacles_removed += sum(
+                    1 for a in tracker.action_log
+                    if a.get('action_name') in _REMOVE_ACTIONS
+                )
+        result['task_performance']['obstacles_removed'] = obstacles_removed
+        result['task_performance']['cells_explored'] = len(union_cells)
+
+        total_messages = 0
+        messages_per_agent: Dict[str, Dict] = {}
+        messages_by_type: Dict[str, int] = {}
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            sent = len(tracker.messages_sent)
+            received = len(tracker.messages_received)
+            total_messages += sent
+            messages_per_agent[aid] = {'sent': sent, 'received': received}
+            for m in tracker.messages_sent:
+                mtype = m.get('message_type', 'unknown')
+                messages_by_type[mtype] = messages_by_type.get(mtype, 0) + 1
+
+        result['communication'] = {
+            'total_messages': total_messages,
+            'messages_per_agent': messages_per_agent,
+            'messages_by_type': messages_by_type,
+        }
+
+        total_help = 0
+        help_per_agent: Dict[str, Dict] = {}
+        total_responses = 0
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            total_help += tracker.help_requests_sent
+            total_responses += tracker.help_responses_sent
+            help_per_agent[aid] = {
+                'sent': tracker.help_requests_sent,
+                'received': tracker.help_requests_received,
+                'responses_sent': tracker.help_responses_sent,
+            }
+
+        _ACCEPT_KW = {'accept', 'will help', 'on my way', 'heading', 'coming', 'assist', 'yes'}
+        _REFUSE_KW = {'cannot', "can't", 'unable', 'busy', 'occupied', 'not able', 'no'}
+        help_accepted = 0
+        help_refused = 0
+        for agent in agent_list:
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            for m in tracker.messages_sent:
+                if m.get('message_type') == 'help':
+                    text_lower = m.get('text', '').lower()
+                    if any(kw in text_lower for kw in _ACCEPT_KW):
+                        help_accepted += 1
+                    elif any(kw in text_lower for kw in _REFUSE_KW):
+                        help_refused += 1
+
+        result['help_seeking'] = {
+            'total_help_requests': total_help,
+            'per_agent': help_per_agent,
+            'help_response_rate': round(total_responses / total_help, 3) if total_help else 0.0,
+            'help_accepted': help_accepted,
+            'help_refused': help_refused,
+        }
+
+        _JOINT_ACTION_NAMES = {'CarryObjectTogether', 'RemoveObjectTogether'}
+        seen_joint: set = set()
+        carry_together_count = 0
+        remove_together_count = 0
+        joint_per_agent: Dict[str, Dict[str, int]] = {}
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            joint_per_agent[aid] = {'carry_together': 0, 'remove_together': 0}
+            for entry in tracker.action_log:
+                aname = entry.get('action_name')
+                if aname not in _JOINT_ACTION_NAMES:
+                    continue
+                tick = entry.get('tick', -1)
+                obj_id = entry.get('args', {}).get('object_id', '')
+                dedup_key = (tick, aname, obj_id)
+                if dedup_key not in seen_joint:
+                    seen_joint.add(dedup_key)
+                    if aname == 'CarryObjectTogether':
+                        carry_together_count += 1
+                    else:
+                        remove_together_count += 1
+                # Per-agent counts
+                if aname == 'CarryObjectTogether':
+                    joint_per_agent[aid]['carry_together'] += 1
+                else:
+                    joint_per_agent[aid]['remove_together'] += 1
+
+        # Help requests: use help_requests_sent (counted once per sender, never duplicated)
+        total_help_asked = sum(
+            self._get_tracker(a).help_requests_sent
+            for a in agent_list if self._get_tracker(a)
+        )
+
+        result['joint_actions'] = {
+            'total_carry_together_attempts': carry_together_count,
+            'total_remove_together_attempts': remove_together_count,
+            'total_joint_action_attempts': carry_together_count + remove_together_count,
+            'total_help_requests_asked': total_help_asked,
+            'per_agent': joint_per_agent,
+        }
+
+        efficiency: Dict[str, Dict] = {}
+        actions_per_agent: Dict[str, int] = {}
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            total_actions = len(tracker.action_log)
+            total_ticks = getattr(agent, '_tick_count', 0) or (tracker.idle_ticks + tracker.llm_wait_ticks + total_actions)
+            actions_per_agent[aid] = total_actions
+
+            action_counts: Dict[str, int] = {}
+            for a in tracker.action_log:
+                aname = a.get('action_name', 'unknown')
+                action_counts[aname] = action_counts.get(aname, 0) + 1
+
+            efficiency[aid] = {
+                'action_counts_by_type': action_counts,
+                'total_actions': total_actions,
+                'idle_ticks': tracker.idle_ticks,
+                'llm_wait_ticks': tracker.llm_wait_ticks,
+                'idle_ratio': round(tracker.idle_ticks / total_ticks, 3) if total_ticks else 0.0,
+                'unique_cells_visited': len(tracker.cells_visited),
+                'cooperative_action_count': len(tracker.cooperative_actions),
+                'validation_failures': tracker.validation_failures,
+                'llm_calls': tracker.llm_call_count,
+                'avg_llm_latency_s': round(
+                    sum(tracker.llm_latencies) / len(tracker.llm_latencies), 3
+                ) if tracker.llm_latencies else 0.0,
+            }
+
+        result['agent_efficiency'] = {'per_agent': efficiency}
+
+        action_counts_list = list(actions_per_agent.values())
+        result['task_allocation_balance'] = {
+            'actions_per_agent': actions_per_agent,
+        }
+
+        victim_timeline: Dict[str, Dict] = {}
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            for v in tracker.victims_found:
+                vid = v['victim_id']
+                if vid not in victim_timeline or v['tick'] < victim_timeline[vid]['found_tick']:
+                    victim_timeline[vid] = {
+                        'victim_id': vid,
+                        'found_tick': v['tick'],
+                        'found_by': aid,
+                        'severity': v['severity'],
+                        'location': v['location'],
+                    }
+
+        sorted_timeline = sorted(victim_timeline.values(), key=lambda x: x['found_tick'])
+        result['additional_suggested_metrics'] = {
+            'per_victim_timeline': sorted_timeline,
+            'time_to_first_victim_found': sorted_timeline[0]['found_tick'] if sorted_timeline else None,
+        }
+
+        memory_dumps: Dict[str, Dict] = {}
+        shared_memory_dumped = False
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            dump: Dict[str, Any] = {}
+
+            if hasattr(agent, 'memory'):
+                try:
+                    dump['full_memory'] = agent.memory.retrieve_all()
+                except Exception:
+                    dump['full_memory'] = []
+
+            if hasattr(agent, 'all_messages_raw'):
+                dump['all_messages_sent_and_received'] = agent.all_messages_raw
+            else:
+                dump['all_messages_sent_and_received'] = []
+
+            if hasattr(agent, 'get_area_summaries'):
+                dump['area_exploration_final'] = agent.get_area_summaries()
+
+            if hasattr(agent, 'WORLD_STATE_GLOBAL'):
+                dump['world_state_global'] = agent.WORLD_STATE_GLOBAL
+
+            if not shared_memory_dumped and hasattr(agent, 'shared_memory') and agent.shared_memory:
+                dump['shared_memory'] = agent.shared_memory.retrieve_all()
+                shared_memory_dumped = True
+
+            memory_dumps[aid] = dump
+
+        result['agent_memory_dumps'] = memory_dumps
+
+        if iteration_history:
+            result['iteration_history'] = [
+                {
+                    'iteration': d.iteration,
+                    'task_assignments': d.task_assignments,
+                    'summary': d.summary,
+                    'score': d.score,
+                    'block_hit_rate': getattr(d, 'block_hit_rate', 0.0),
+                } if hasattr(d, 'iteration') else d
+                for d in iteration_history
+            ]
+        else:
+            result['iteration_history'] = []
+
+        return result
+
+    def save(self, path: str, results: Optional[Dict] = None) -> None:
+        if results is None:
+            results = {}
+        results = _strip_thinking(results)
+        self._atomic_write_json(path, results)
+
+    def save_incremental(
+        self,
+        log_dir: str,
+        agents: Optional[List[Any]] = None,
+    ) -> Dict[str, Optional[str]]:
+        """Write granular snapshots for per-agent metrics, per-agent memory,
+        communication logs, and shared memory. Each stream is written to its
+        own file so partial failures don't poison other streams.
+
+        Returns a dict mapping stream name -> error string (or None on success).
+        """
+        agent_list = agents if agents is not None else self._agents
+        errors: Dict[str, Optional[str]] = {}
+
+        agent_metrics_dir = os.path.join(log_dir, 'agent_metrics')
+        agent_memory_dir = os.path.join(log_dir, 'agent_memory')
+        comms_dir = os.path.join(log_dir, 'communication')
+        os.makedirs(agent_metrics_dir, exist_ok=True)
+        os.makedirs(agent_memory_dir, exist_ok=True)
+        os.makedirs(comms_dir, exist_ok=True)
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            tracker = self._get_tracker(agent)
+            if not tracker:
+                continue
+            try:
+                path = os.path.join(agent_metrics_dir, f'{aid}.json')
+                self._atomic_write_json(path, _strip_thinking(tracker.to_dict()))
+            except Exception as e:
+                errors[f'agent_metrics:{aid}'] = str(e)
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            dump: Dict[str, Any] = {}
+            try:
+                if hasattr(agent, 'memory'):
+                    try:
+                        dump['full_memory'] = agent.memory.retrieve_all()
+                    except Exception:
+                        dump['full_memory'] = []
+                if hasattr(agent, 'get_area_summaries'):
+                    dump['area_exploration'] = agent.get_area_summaries()
+                if hasattr(agent, 'WORLD_STATE_GLOBAL'):
+                    dump['world_state_global'] = agent.WORLD_STATE_GLOBAL
+                path = os.path.join(agent_memory_dir, f'{aid}.json')
+                self._atomic_write_json(path, _strip_thinking(dump))
+            except Exception as e:
+                errors[f'agent_memory:{aid}'] = str(e)
+
+        for agent in agent_list:
+            aid = self._get_agent_id(agent)
+            if not hasattr(agent, 'all_messages_raw'):
+                continue
+            try:
+                path = os.path.join(comms_dir, f'{aid}.json')
+                payload = {
+                    'agent_id': aid,
+                    'messages': agent.all_messages_raw,
+                }
+                self._atomic_write_json(path, _strip_thinking(payload))
+            except Exception as e:
+                errors[f'communication:{aid}'] = str(e)
+
+        shared_mem_obj = None
+        for agent in agent_list:
+            sm = getattr(agent, 'shared_memory', None)
+            if sm is not None:
+                shared_mem_obj = sm
+                break
+        if shared_mem_obj is not None:
+            try:
+                path = os.path.join(log_dir, 'shared_memory.json')
+                self._atomic_write_json(
+                    path, _strip_thinking(shared_mem_obj.retrieve_all())
+                )
+            except Exception as e:
+                errors['shared_memory'] = str(e)
+
+        return errors
+
+    @staticmethod
+    def _atomic_write_json(path: str, data: Any) -> None:
+        """Write JSON atomically via tmp file + rename so readers never see
+        a half-written file and a mid-write crash can't corrupt the target."""
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        tmp = f'{path}.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+        os.replace(tmp, path)
+
+
+    @staticmethod
+    def _get_tracker(agent: Any) -> Optional[AgentMetricsTracker]:
+        return getattr(agent, 'metrics', None)
+
+    @staticmethod
+    def _get_agent_id(agent: Any) -> str:
+        return getattr(agent, 'agent_id', str(id(agent)))

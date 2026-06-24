@@ -1,0 +1,31 @@
+# Demo map showing multiple rules
+
+name: demo
+grid: [22, 19]
+seed: 7
+
+rooms:
+  auto:
+    count: 9          # 9 rooms
+    size: [5, 4]      # each 5 wide x 4 tall (walls included)
+    columns: 3        # arranged 3 per row (so a 3x3 grid)
+
+drop_zone: { location: [20, 5] }   # auto-sized to fit all victims
+
+victims:
+  per_room: 1                 # "1 victim per room"
+  by_area:                    # "areas 1, 2, 3 should have a red victim"
+    critical: [1, 2, 3]
+  min_by_category:            # "at least 1 red victim"
+    critical: 1
+
+obstacles:
+  at_doors: { probability: 0.5 }
+
+goal:
+  rescue: all                 # rescue every placed INJURED victim
+
+decorations:
+  auto_roof: true
+  auto_streets: true
+  auto_signs: true

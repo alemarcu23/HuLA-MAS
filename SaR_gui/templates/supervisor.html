@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="icon" href="/static/images/X.ico">
+    <link rel="stylesheet" href="/static/lib/bootstrap/bootstrap-4.4.1.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="/static/css/GUI.css">
+    <link rel="stylesheet" href="/static/lib/fontawesome-free-5.12.0-web/css/all.css">
+    <title>Human Supervisor</title>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #1d1f23;
+            color: #e8e8e8;
+            font-family: sans-serif;
+        }
+
+        /* ── Toolbar ─────────────────────────────────────────────────────── */
+        #matrx-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 4px 14px;
+            background: #111;
+            border-bottom: 1px solid #2a2d33;
+            z-index: 1000;
+            flex-shrink: 0;
+            /* override Bootstrap .toolbar row styles */
+            margin: 0 !important;
+        }
+        #matrx-toolbar img#matrx_logo { height: 36px; }
+        #matrx-toolbar .sup-title { font-size: 15px; font-weight: 600; color: #e8e8e8; }
+        #matrx-toolbar .spacer { flex: 1; }
+        #sup-pause-btn { min-width: 90px; font-size: 12px; }
+        #sup-pause-btn.paused { background: #b34000; border-color: #b34000; color: #fff; }
+        #sup-tick { font-size: 11px; color: #888; }
+
+        /* ── Paused banner ───────────────────────────────────────────────── */
+        #paused-banner {
+            display: none;
+            background: #7a2800;
+            color: #ffd0a0;
+            text-align: center;
+            padding: 4px 0;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            border-bottom: 1px solid #b34000;
+            flex-shrink: 0;
+        }
+        #paused-banner.visible { display: block; }
+
+        /* ── Main two-column layout ──────────────────────────────────────── */
+        #sup-body {
+            display: flex;
+            height: calc(100vh - 49px); /* adjusted after load */
+            overflow: hidden;
+        }
+
+        /* ── Grid pane ───────────────────────────────────────────────────── */
+        #container {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            /* remove Bootstrap col padding */
+            padding: 0 !important;
+        }
+        #grid {
+            /* gen_grid.js manages size — leave unconstrained */
+        }
+
+        /* ── Sidebar ─────────────────────────────────────────────────────── */
+        #sup-sidebar {
+            width: 480px;
+            min-width: 480px;
+            max-width: 480px;
+            display: flex;
+            flex-direction: column;
+            background: #1a1c20;
+            border-left: 1px solid #2a2d33;
+            overflow: hidden;
+        }
+
+        .sup-panel {
+            background: #22252b;
+            border-bottom: 1px solid #2a2d33;
+            padding: 8px 10px;
+            flex-shrink: 0;
+        }
+        .sup-panel h6 {
+            margin: 0 0 6px 0;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #888;
+        }
+
+        /* ── Agent chips ─────────────────────────────────────────────────── */
+        #agents-strip {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .agent-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #1a1c20;
+            border: 1px solid #3a3d44;
+            border-left-width: 3px;
+            border-radius: 5px;
+            padding: 5px 8px;
+            font-size: 11px;
+        }
+        .agent-chip .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .agent-chip .chip-name { font-weight: 700; color: #e0e0e0; }
+        .agent-chip .chip-role {
+            font-size: 11px;
+            color: #bbb;
+            flex: 1;
+        }
+        .agent-chip .chip-role.unassigned { color: #555; font-style: italic; }
+        .agent-chip .pos { color: #666; font-size: 10px; margin-left: auto; }
+
+        /* ── Command panel ───────────────────────────────────────────────── */
+        #cmd-panel { flex-shrink: 0; }
+
+        /* Per-agent text boxes */
+        #cmd-boxes {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .agent-cmd-box {
+            border-radius: 5px;
+            border: 1px solid #2e3138;
+            border-top-width: 3px;
+            padding: 8px 10px;
+            background: #16181c;
+        }
+        .agent-cmd-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+        .agent-cmd-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .agent-cmd-name {
+            font-size: 12px;
+            font-weight: 700;
+            color: #e0e0e0;
+        }
+        .agent-cmd-role {
+            font-size: 10px;
+            color: #888;
+            font-style: italic;
+        }
+        .agent-cmd-textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: #0f1114;
+            color: #eee;
+            border: 1px solid #3a3d44;
+            border-radius: 4px;
+            padding: 6px 8px;
+            font-size: 12px;
+            font-family: inherit;
+            resize: none;
+            display: block;
+        }
+        .agent-cmd-textarea:focus { outline: none; border-color: var(--agent-color, #888); }
+        .agent-cmd-footer {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
+            margin-top: 5px;
+        }
+        .agent-cmd-send {
+            flex-shrink: 0;
+            font-size: 11px;
+            padding: 3px 12px;
+            border-radius: 4px;
+            background: transparent;
+            border: 1px solid var(--agent-color, #888);
+            color: var(--agent-color, #ccc);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .agent-cmd-send:hover { opacity: 0.8; }
+        .agent-cmd-status {
+            font-size: 10px;
+            color: #666;
+            min-height: 14px;
+            flex: 1;
+        }
+        .agent-cmd-status.ok  { color: #6d6; }
+        .agent-cmd-status.err { color: #f88; }
+
+        /* Broadcast row */
+        .broadcast-box {
+            border-radius: 5px;
+            border: 1px dashed #3a3d44;
+            padding: 6px 8px;
+            margin-top: 4px;
+            background: #13151a;
+        }
+        .broadcast-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .broadcast-input {
+            flex: 1;
+            background: #0f1114;
+            color: #eee;
+            border: 1px solid #3a3d44;
+            border-radius: 4px;
+            padding: 4px 7px;
+            font-size: 12px;
+            font-family: inherit;
+            min-width: 0;
+        }
+        .broadcast-input:focus { outline: none; border-color: #fa6; }
+        .broadcast-send {
+            flex-shrink: 0;
+            font-size: 11px;
+            padding: 3px 9px;
+        }
+
+        /* ── Message log ─────────────────────────────────────────────────── */
+        #log-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            padding: 8px 10px;
+        }
+        #log-panel h6 {
+            margin: 0 0 5px 0;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #888;
+            flex-shrink: 0;
+        }
+        #msg-log {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: #15171a;
+            border: 1px solid #2a2d33;
+            border-radius: 4px;
+            padding: 5px;
+            font-size: 11px;
+            font-family: monospace;
+            min-height: 0;
+        }
+        .msg-row {
+            padding: 4px 5px;
+            border-bottom: 1px solid #1e2025;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            line-height: 1.45;
+        }
+        .msg-row:last-child { border-bottom: none; }
+        .msg-header {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+            align-items: center;
+            margin-bottom: 2px;
+        }
+        .msg-from { font-weight: 700; font-size: 11px; }
+        .msg-to   { color: #777; font-size: 10px; }
+        .msg-type {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            background: #2a2d33;
+            border-radius: 2px;
+            padding: 1px 4px;
+            color: #999;
+        }
+        .msg-body { color: #ccc; word-break: break-word; white-space: pre-wrap; font-size: 11px; }
+
+        .msg-row.supervisor_command { background: #231a0d; border-left: 3px solid #fa6; }
+        .msg-row.supervisor_command .msg-from { color: #fa6; }
+        .msg-row.ask_help   { background: #1a1014; border-left: 3px solid #f55; }
+        .msg-row.ask_help   .msg-from { color: #f88; }
+        .msg-row.help       { background: #0f1a14; border-left: 3px solid #4b8; }
+        .msg-row.plan_update { background: #10131a; }
+
+        /* ── Private human-only messages from robots ── */
+        .msg-row.plan_human {
+            background: #161206;
+            border-left: 3px solid #d4a017;
+        }
+        .msg-row.plan_human .msg-from { color: #d4a017; }
+        .msg-row.plan_human .msg-type { background: #2b2005; color: #d4a017; }
+
+        .msg-row.action_human {
+            background: #0b1320;
+            border-left: 3px solid #4a9ecc;
+        }
+        .msg-row.action_human .msg-from { color: #7cc4e8; }
+        .msg-row.action_human .msg-type { background: #0f1d2e; color: #4a9ecc; }
+
+        /* Motivation block rendered below the main text */
+        .msg-motivation {
+            margin-top: 3px;
+            padding: 3px 6px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 3px;
+            font-size: 10px;
+            color: #aaa;
+            font-style: italic;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .msg-motivation::before {
+            content: "Why: ";
+            font-weight: 700;
+            font-style: normal;
+            color: #888;
+        }
+
+        /* ── Context menu (required by gen_grid.js) ─────────────────────── */
+        #contextMenu { z-index: 99999; }
+    </style>
+</head>
+<body>
+
+    <!-- ── Toolbar ─────────────────────────────────────────────────────── -->
+    <div id="matrx-toolbar" class="toolbar bg-dark">
+        <img src="/static/images/matrx_logo_light.svg" alt="MATRX" id="matrx_logo">
+        <span class="sup-title">Human Supervisor</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-outline-warning" id="sup-pause-btn">⏸ Pause</button>
+        <span id="sup-tick" style="font-size:11px;color:#888;">connecting…</span>
+    </div>
+
+    <!-- ── Paused banner ───────────────────────────────────────────────── -->
+    <div id="paused-banner">⏸ SIMULATION PAUSED — agents are frozen</div>
+
+    <!-- ── Main content ────────────────────────────────────────────────── -->
+    <div id="sup-body">
+
+        <!-- Game grid (gen_grid.js renders here) -->
+        <div id="container" class="grid-container">
+            <div id="grid"></div>
+        </div>
+
+        <!-- Sidebar -->
+        <div id="sup-sidebar">
+
+            <!-- Agent status -->
+            <div class="sup-panel">
+                <h6>Agents</h6>
+                <div id="agents-strip">
+                    <span style="color:#555;font-size:11px;">waiting…</span>
+                </div>
+            </div>
+
+            <!-- Command panel -->
+            <div class="sup-panel" id="cmd-panel">
+                <h6>Send command</h6>
+
+                <!-- Per-agent boxes — built dynamically by supervisor_game.js -->
+                <div id="cmd-boxes">
+                    <span style="color:#555;font-size:11px;">waiting for agents…</span>
+                </div>
+
+                <!-- Broadcast row (always visible) -->
+                <div class="broadcast-box">
+                    <div class="broadcast-label">📢 Broadcast to all agents</div>
+                    <div class="agent-cmd-row">
+                        <input type="text" id="broadcast-input" class="broadcast-input"
+                               placeholder="Message all agents…">
+                        <button class="btn btn-warning btn-sm broadcast-send"
+                                id="broadcast-send">→ All</button>
+                    </div>
+                    <span class="agent-cmd-status" id="broadcast-status"></span>
+                </div>
+            </div>
+
+            <!-- Message log -->
+            <div id="log-panel">
+                <h6>Message log</h6>
+                <div id="msg-log"></div>
+            </div>
+
+        </div><!-- /#sup-sidebar -->
+    </div><!-- /#sup-body -->
+
+    <!-- Context menu (required placeholder for gen_grid.js) -->
+    <div class="dropdown-menu" id="contextMenu" style="display:none">
+        <a class="dropdown-item" href="#">—</a>
+    </div>
+
+    <!-- jQuery + Bootstrap (needed by gen_grid.js) -->
+    <script src="/static/lib/jquery/jquery-3.4.1.min.js"></script>
+    <script src="/static/lib/popper/popper-1.16.0.js"></script>
+    <script src="/static/lib/bootstrap/bootstrap-4.4.1.min.js"></script>
+
+    <!-- util.js: fix_img_url needed by gen_grid.js -->
+    <script src="/static/js/util.js"></script>
+
+    <!-- gen_grid.js: tile-based game grid renderer -->
+    <script src="/static/js/gen_grid.js"></script>
+
+    <!-- supervisor_game.js: supervisor loop + sidebar + stubs -->
+    <script src="/static/js/supervisor_game.js"></script>
+
+</body>
+</html>

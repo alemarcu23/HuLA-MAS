@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  search-rescue-game:
+    build: .
+    container_name: search_rescue_multiplayer
+    ports:
+      # # Flask visualization server - accessible from host
+      # - "3000:3000"
+      # # MATRX API - accessible from host
+      # - "3001:3001"
+      - "0.0.0.0:3000:3000"  # Flask
+      - "0.0.0.0:3001:3001"  # MATRX API
+    environment:
+      # Game configuration
+      - TASK_TYPE=official
+      - CONDITION=normal
+      # - SESSION_ID=default_session
+      - SESSION_ID=session1
+      # Flask server configuration (use 0.0.0.0 to listen on all network interfaces)
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=3000
+      # Python settings
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Mount logs directory to persist game logs
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - game-network
+    # Healthcheck to monitor container
+    # Uses 127.0.0.1 since Flask runs on same container (localhost alias)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  game-network:
+    driver: bridge

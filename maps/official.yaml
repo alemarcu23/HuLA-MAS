@@ -1,0 +1,49 @@
+# 14-room search-and-rescue map.
+
+name: official
+grid: [25, 24]
+seed: 1
+
+rooms:
+  # Row 1 — doors on the bottom wall (enter from the North)
+  - { id: 1,  pos: [1, 1],   size: [5, 4], door: bottom }
+  - { id: 2,  pos: [7, 1],   size: [5, 4], door: bottom }
+  - { id: 3,  pos: [13, 1],  size: [5, 4], door: bottom }
+  - { id: 4,  pos: [19, 1],  size: [5, 4], door: bottom }
+  # Row 2 — doors on the top wall (enter from the South)
+  - { id: 5,  pos: [1, 7],   size: [5, 4], door: top }
+  - { id: 6,  pos: [7, 7],   size: [5, 4], door: top }
+  - { id: 7,  pos: [13, 7],  size: [5, 4], door: top }
+  # Row 3 — doors on the bottom wall
+  - { id: 8,  pos: [1, 13],  size: [5, 4], door: bottom }
+  - { id: 9,  pos: [7, 13],  size: [5, 4], door: bottom }
+  - { id: 10, pos: [13, 13], size: [5, 4], door: bottom }
+  # Row 4 — doors on the top wall
+  - { id: 11, pos: [1, 19],  size: [5, 4], door: top }
+  - { id: 12, pos: [7, 19],  size: [5, 4], door: top }
+  - { id: 13, pos: [13, 19], size: [5, 4], door: top }
+  - { id: 14, pos: [19, 19], size: [5, 4], door: top }
+
+drop_zone: { location: [23, 8], height: 8 }
+
+victims:
+  per_room: 1                 # every room gets exactly one victim
+  by_area:                    # but these areas are guaranteed a critical (red) victim
+    critical: [1, 7, 14]
+  pool: default               # draw from all victim types (critical + mild + healthy)
+
+obstacles:
+  at_doors: { probability: 0.4 }   # ~40% of doors are blocked by a random obstacle
+
+goal:
+  rescue: all               
+
+decorations:
+  auto_roof: true
+  auto_streets: true
+  auto_signs: true
+  keyboard_sign: [12, 0]
+  props:
+    - { pos: [21, 7],  name: heli,      img: /images/helicopter.svg, size: 3,   traversable: false }
+    - { pos: [21, 16], name: ambulance, img: /images/ambulance.svg,  size: 2.3, traversable: false }
+    - { pos: [1, 12],  name: plant,     img: /images/tree.svg,       size: 3 }
